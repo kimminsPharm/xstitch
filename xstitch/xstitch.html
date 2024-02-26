@@ -1,0 +1,595 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cross-Stitch Editor</title>
+
+<!--------------------------------------------------------------------->
+<!--------------------------CSS STYLE---------------------------------->
+<!--------------------------------------------------------------------->
+<style>
+    :root{
+        --HOOP_WIDTH: 400;
+    }
+
+    body {
+        font-family: Arial, sans-serif;
+        margin: 0;
+        padding: 0;
+        background-color: #f0f0f0;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        height: 100vh;
+        overflow: hidden;
+    }
+
+    .container {
+        width: 800px;
+        height: 600px;
+        background-color: #fff;
+        border-radius: 5px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        overflow: hidden;
+        position: relative;
+        display: flex;
+        left: 200;
+    }
+
+    .grid {
+        display: grid;
+        grid-template-columns: repeat(20, 20px);
+        grid-gap: 0px;
+        position: absolute;
+        top: 200;
+        left: 200;
+        transform-origin: top left;
+    }
+
+    .cell {
+        width: 20px;
+        height: 20px;
+        background-color: #fff;
+        border: 1px solid #ccc;
+    }
+
+    .hoop-overlay {
+        position: relative;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        width: var(--HOOP_WIDTH); /* Diameter of the circle */
+        height: var(--HOOP_WIDTH); /* Diameter of the circle */
+        border: 2px dashed #ccc; /* Adjust border style as needed */
+        border-radius: 50%;
+        pointer-events: none; /* Prevent the overlay from capturing mouse events */
+    }
+
+    .sidebar {
+        width: 150px;
+        height: 100%;
+        background-color: #f0f0f0;
+        padding: 20px 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: space-evenly;
+        z-index: 1;
+    }
+
+    .palette {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 10px;
+        padding: 10px;
+        border: 1px solid #ccc;
+        margin: 10px;
+    }
+
+    .colour {
+        width: 30px;
+        height: 30px;
+        cursor: pointer;
+    }
+
+    .colour:hover {
+        opacity: 0.7;
+    }
+
+    .selectedColourContainer {
+        width: fit-content;
+        height: fit-content;
+        padding: 10px;
+        display: flex;
+        flex-direction: row;
+        align-items: center;
+        justify-content: space-evenly;
+    }
+
+    /* Modal styles */
+    .modal {
+        display: none;
+        position: fixed;
+        z-index: 1;
+        left: 0;
+        top: 0;
+        width: 100%;
+        height: 100%;
+        overflow: auto;
+        background-color: rgba(0,0,0,0.4);
+    }
+
+    .modal-content {
+        background-color: #fefefe;
+        margin: 10% auto;
+        padding: 20px;
+        border: 1px solid #888;
+        width: 80%;
+        max-width: 600px;
+        border-radius: 5px;
+        box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+    }
+
+    .modal-content img {
+        width: 100%;
+        max-width: 100px;
+        height: auto;
+        cursor: pointer;
+        margin: 5px;
+        border-radius: 5px;
+    }
+
+    .close {
+        color: #aaa;
+        float: right;
+        font-size: 28px;
+        font-weight: bold;
+        cursor: pointer;
+    }
+
+    .close:hover,
+    .close:focus {
+        color: black;
+        text-decoration: none;
+        cursor: pointer;
+    }
+</style>
+</head>
+
+<!---------------------------------------------------------------------------------->
+<!---------------------------------STRUCTURE---------------------------------------->
+<!---------------------------------------------------------------------------------->
+<body>
+<div class="sidebar" id="sidebar">
+    <input type="color" id="colour-picker" inputmode="hex" value="#000000">
+    <button onclick="addColour()">Add Colour</button>
+    <div class="selectedColourContainer" id="selectedColourContainer">
+        <div class="colour" id="leftColour"></div>
+        <div class="colour" id="rightColour"></div>
+    </div>
+    <div class="palette" id="palette"></div>
+    <button onclick="clearPalette()">Clear Palette</button>
+    <div>
+        <button id="saveButton">Save</button>
+        <button id="loadButton">Load</button>
+    </div>
+</div>
+<div class="container" id="container">
+    <div class="grid" id="grid"></div>
+    <div class="hoop-overlay"></div>
+</div>
+<!-- Modal -->
+<div id="myModal" class="modal">
+  <div class="modal-content">
+    <span class="close">&times;</span>
+    <h2>Saved Designs</h2>
+    <div id="thumbnailContainer"></div>
+  </div>
+</div>
+
+
+<!-------------------------------------------------------------------->
+<!-------------------------JAVASCRIPT--------------------------------->
+<!-------------------------------------------------------------------->
+<script>
+    //CONSTANTS
+    const container = document.getElementById('container');
+    const grid = document.getElementById('grid');
+    const sidebar = document.getElementById('sidebar');
+    const saveButton = document.getElementById('saveButton');
+    const loadButton = document.getElementById('loadButton');
+    const modal = document.getElementById('myModal');
+    const modalContent = document.querySelector('.modal-content');
+    const thumbnailContainer = document.getElementById('thumbnailContainer');
+    const closeBtn = document.querySelector('.close');
+    const leftColour = document.getElementById('leftColour');
+    const rightColour = document.getElementById('rightColour');
+
+
+    //VARIABLES
+    let scale = 1;
+    let offsetX = 0;
+    let offsetY = 0;
+    let isDragging = false;
+    let isPanning = false;
+    let isPainting = false;
+    let cellSize = 20;
+    let gridWidth = 20;
+    let hoopDiameter = 400;
+    
+    let colours = ["#000000", "#ffffff"];
+    let focusColourIndex = 0;
+
+    let isLeftPressed = false;
+
+/*
+    class CrossStitchEditor {
+        constructor() {}
+        init() {
+            this.createGrid();
+        }
+
+        createGrid(){
+            for (let i = 0; i < (400); i++) {
+                const cell = document.createElement('div');
+                cell.classList.add('cell');
+                cell.dataset.colourIndex = '0'; // Start with the first colour
+
+                //Add cell functions
+                cell.addEventListener('mouseover', (event) => {
+                    if (isPainting){
+                        paintCell(cell);
+                    }
+                });
+                cell.addEventListener('mousedown', (event) => {
+                    if (!isPanning){
+                        if (event.button === 0){
+                            focusColourIndex = parseInt(leftColour.dataset.colourIndex);
+                        }
+                        else{
+                            focusColourIndex = parseInt(rightColour.dataset.colourIndex);
+                        }
+                        paintCell(cell, focusColourIndex);
+                    }
+                });
+                grid.appendChild(cell);
+            }
+        }
+
+        addEventListeners(){
+
+        }
+
+        paintCell(){
+
+        }
+    }
+*/
+
+    //////////////////////////////////////////////////////////////////
+    //  CONSTRUCTION CODE 
+    /////////////////////////////////////////////////////////////////
+    //Assign the colours to the buttons
+    leftColour.dataset.colourIndex = "0";
+    rightColour.dataset.colourIndex = "1";
+
+    function updateSelectedColours(){
+        // Set the selected cursor colours to the default
+        leftColour.style.backgroundColor = colours[parseInt(leftColour.dataset.colourIndex)];
+        rightColour.style.backgroundColor = colours[parseInt(rightColour.dataset.colourIndex)];
+    }
+    updateSelectedColours();
+
+    // Create the grid
+    for (let i = 0; i < (400); i++) {
+        const cell = document.createElement('div');
+        cell.classList.add('cell');
+        cell.dataset.colourIndex = '0'; // Start with the first colour
+        cell.addEventListener('mouseover', (event) => {
+            if (isPainting){
+                paintCell(cell);
+            }
+        });
+        cell.addEventListener('mousedown', (event) => {
+            if (!isDragging){
+                if (event.button === 0){
+                    focusColourIndex = parseInt(leftColour.dataset.colourIndex);
+                }
+                else{
+                    focusColourIndex = parseInt(rightColour.dataset.colourIndex);
+                }
+                paintCell(cell, focusColourIndex);
+            }
+        });
+        grid.appendChild(cell);
+    }
+
+
+    /////////////////////////////////////////////////////////////////////////////
+    //FUNCTIONS
+    /////////////////////////////////////////////////////////////////////////////
+
+    
+    
+    
+    //PALETTE
+    /////////
+    function focusColour(index) {
+        focusColourIndex = index;
+    }
+
+    //make the last cell a plus to add new colours
+    //assign to both mouse buttons
+    function updatePalette() {
+        const palette = document.getElementById('palette');
+        palette.innerHTML = '';
+        colours.forEach((colour, index) => {
+            const colourDiv = document.createElement('div');
+            colourDiv.className = 'colour';
+            colourDiv.style.backgroundColor = colour;
+            colourDiv.dataset.colourIndex = index;
+            colourDiv.addEventListener('mousedown', (event) => {
+                //console.log(event.button);
+                switch (event.button){
+                    case 0:
+                        leftColour.dataset.colourIndex = index;
+                        break;
+                    case 2:
+                        rightColour.dataset.colourIndex = index;
+                        break;
+                    default:
+                        break;
+                }
+                focusColour(index);
+                updateSelectedColours();
+
+            });
+            palette.appendChild(colourDiv);
+        });
+        const addButton = document.createElement('button');
+        addButton.innerHTML = "+";
+        addButton.addEventListener('click', (event) => {
+            addColour();
+        });
+        palette.appendChild(addButton);
+    }
+    updatePalette();
+
+    function clearPalette() {
+        colours = ["#000000", "#ffffff"];
+        leftColour.dataset.colourIndex = "0";
+        rightColour.dataset.colourIndex = "1";
+        updateSelectedColours();
+        updatePalette();
+    }
+
+    function addColour() {
+        const colourInput = document.getElementById('colour-picker');
+        const newColour = colourInput.value;
+
+        if (!colours.includes(newColour)) {
+            colours.splice(colours.length - 1, 0, newColour);
+            focusColourIndex = colours.length - 2;
+            updatePalette();
+            updateSelectedColours();
+        }
+    }
+
+    function removeColour(colour) {
+        colours = colours.filter(c => c !== colour);
+        updatePalette();
+    }
+    
+
+
+    //HOOP OVERLAY
+    //////////////
+    // Update hoop overlay position and size
+    function updateHoopOverlay() {
+        const hoopOverlay = document.querySelector('.hoop-overlay');
+
+        const scaledCellSize = cellSize * scale; // Calculate the scaled cell size
+
+        // Calculate the position of the hoop overlay relative to the grid
+        const gridOffsetX = offsetX / scaledCellSize; // Use the scaled cell size for the offset
+        const gridOffsetY = offsetY / scaledCellSize; // Use the scaled cell size for the offset
+
+        // Calculate the difference in size between the grid and the hoop
+        const totalGridWidth = 1 + gridWidth * cellSize + (gridWidth-1) + 1;
+        const gridHoopOffset = totalGridWidth - hoopDiameter;
+
+        // Calculate the center of the grid
+        const gridCenterX = (gridWidth / 2);
+        const gridCenterY = (gridWidth / 2);
+
+        // Calculate the position of the hoop overlay relative to the grid center
+        //To keep the hoop stationary w grid during pan and zoom - times offset by scale and + w grid center
+        const hoopOffsetX = (gridCenterX + gridOffsetX*scale);
+        const hoopOffsetY = (gridCenterY + gridOffsetY*scale);
+
+        // Calculate the position of the hoop overlay relative to the viewport
+        const hoopOverlayX = hoopOffsetX * scaledCellSize + gridHoopOffset*scale/2;
+        const hoopOverlayY = hoopOffsetY * scaledCellSize + gridHoopOffset*scale/2;
+
+        // Set the position and size of the hoop overlay
+        hoopOverlay.style.left = hoopOverlayX + 'px';
+        hoopOverlay.style.top = hoopOverlayY + 'px';
+        hoopOverlay.style.width = hoopDiameter*scale + 'px';
+        hoopOverlay.style.height = hoopDiameter*scale + 'px';
+    }
+    updateHoopOverlay();
+
+    //GRID
+    //////////
+    function paintCell(cell) {
+        cell.dataset.colourIndex = focusColourIndex.toString();
+        cell.style.backgroundColor = colours[focusColourIndex];
+        updateHoopOverlay();
+    }
+
+
+    ///////////////////////////////////////////////////////
+    //  INPUT FUNCTIONS
+    ///////////////////////////////////////////////////////
+    //WINDOW
+    ////////
+    window.addEventListener('click', (event) => { // Close the modal when clicking outside the modal content
+        if (event.target === modal) {
+            modal.style.display = 'none';
+        }
+    });
+
+    window.addEventListener("blur", () => {
+        isDragging = false;
+        isPanning = false;
+        isPainting = false;
+        isLeftPressed = false;
+    });
+
+
+
+    //DOCUMENT
+    //////////
+    document.addEventListener('keydown', (event) => {
+        if (event.key = "Shift"){
+            isDragging = true;
+        };
+    });
+
+    document.addEventListener('keyup', (event) => {
+        if (event.key = "shift"){
+            isDragging = false;
+        };
+    });
+
+
+    
+    //CONTAINER
+    ///////////
+    container.addEventListener('wheel', (event) => {
+        event.preventDefault();
+        const delta = event.deltaY;
+        const zoomStep = 0.01;
+        const minScale = 0.5;
+        const maxScale = 3;
+
+        if (delta < 0) {
+            scale = Math.min(scale + zoomStep, maxScale);
+        } else {
+            scale = Math.max(scale - zoomStep, minScale);
+        }
+
+        grid.style.transform = `scale(${scale
+        }) translate(${offsetX}px, ${offsetY}px)`;
+        updateHoopOverlay();
+    });
+
+    container.addEventListener('mousedown', (event) => {
+        //console.log("1");
+        if (!isDragging){
+            isPainting = true;
+            if (event.button == 0){
+                isLeftPressed = true;
+            }
+            else{
+                isLeftPressed = false;
+            }
+        }
+        else {
+            isPanning = true;
+            startX = event.clientX - offsetX;
+            startY = event.clientY - offsetY;
+        }
+        event.preventDefault(); //This prevents the not-allowed cursor from appearing and breaking the mouseup reset
+    });
+
+    container.addEventListener('mousemove', (event) => {
+        if (isPanning){
+
+        offsetX = event.clientX - startX;
+        offsetY = event.clientY - startY;
+
+        grid.style.transform = `scale(${scale}) translate(${offsetX}px, ${offsetY}px)`;
+        }
+        else{
+            return;
+        }
+        updateHoopOverlay();
+    });
+
+    container.addEventListener('mouseup', () => {
+        isPanning = false;
+        isPainting = false;
+        isLeftPressed = false;
+        updateHoopOverlay();
+    });
+
+    container.addEventListener('contextmenu', (event) => {
+        event.preventDefault();
+    });
+
+
+
+    //SAVE BUTTON
+    //////////////
+    saveButton.addEventListener('click', () => {
+        const gridData = [];
+        document.querySelectorAll('.cell').forEach(cell => {
+            const colourIndex = parseInt(cell.dataset.colourIndex);
+            gridData.push(colourIndex);
+        });
+
+        // Store the design as a base64-encoded string
+        const canvas = document.createElement('canvas');
+        canvas.width = 20; // Grid width
+        canvas.height = 20; // Grid height
+        const ctx = canvas.getContext('2d');
+        let index = 0;
+        for (let y = 0; y < 20; y++) {
+            for (let x = 0; x < 20; x++) {
+                ctx.fillStyle = colours[gridData[index]];
+                ctx.fillRect(x, y, 1, 1);
+                index++;
+            }
+        }
+        const dataURL = canvas.toDataURL();
+        const savedDesigns = JSON.parse(localStorage.getItem('savedDesigns')) || [];
+        savedDesigns.push(dataURL);
+        localStorage.setItem('savedDesigns', JSON.stringify(savedDesigns));
+        alert('Design saved!');
+    });
+
+
+
+    //LOAD BUTTON
+    ///////////////
+    loadButton.addEventListener('click', () => {
+        thumbnailContainer.innerHTML = '';
+        const savedDesigns = JSON.parse(localStorage.getItem('savedDesigns')) || [];
+        console.log('Saved Designs:', savedDesigns); // Log saved designs to check if they are loaded correctly
+        savedDesigns.forEach((design, index) => {
+            const thumbnail = document.createElement('img');
+            thumbnail.src = design;
+            thumbnail.alt = `Thumbnail ${index + 1}`;
+            thumbnail.addEventListener('click', () => {
+                // Load the selected design
+                // Implement this functionality based on your needs
+                alert(`Load design: ${index + 1}`);
+                modal.style.display = 'none';
+            });
+            thumbnailContainer.appendChild(thumbnail);
+        });
+        modal.style.display = 'block';
+    });
+
+
+
+    //CLOSE BUTTON
+    /////////////////
+    closeBtn.addEventListener('click', () => {
+        modal.style.display = 'none';
+    });
+</script>
+</body>
+</html>
